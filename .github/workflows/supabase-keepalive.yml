@@ -1,0 +1,78 @@
+name: Supabase MemoFilm Keepalive
+
+# 触发条件：定时 + 手动
+on:
+  schedule:
+    # 每5天的0点0分（UTC时间）执行一次
+    # cron 五字段：分 时 日 月 周
+    # 0 0 */5 * * = 每5天的00:00
+    - cron: '0 0 */5 * *'
+  # 允许在 GitHub 网页上手动点 "Run workflow" 触发，方便测试
+  workflow_dispatch:
+
+# 任务定义
+jobs:
+  ping-supabase:
+    # 在最新版 Ubuntu 上运行
+    runs-on: ubuntu-latest
+    
+    steps:
+      # 步骤1：打印当前时间，方便日志排查
+      - name: Print timestamp
+        run: echo "Running at $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+      
+      # 步骤2：发送请求到 Supabase，触发数据库活动
+      - name: Ping Supabase REST API
+        env:
+          # 把 anon key 存到环境变量，避免直接写在命令里（更安全）
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        run: |
+          # curl 参数说明：
+          # -s        静默模式，不显示进度条
+          # -S        但如果出错仍显示错误信息
+          # -w "\nHTTP_CODE:%{http_code}\n"  在输出末尾追加 HTTP 状态码
+          # --max-time 30  最多等30秒，防止卡死
+          # -H        添加请求头
+          response=$(curl -sS -w "\nHTTP_CODE:%{http_code}" --max-time 30 \
+            -H "apikey: $SUPABASE_ANON_KEY" \
+            -H "Authorization: Bearer $SUPABASE_ANON_KEY" \
+            "$SUPABASE_URL/rest/v1/movies?select=id")
+          
+          # 打印响应内容（只查 id 字段，数据量极小）
+          echo "Response: $response"
+          
+          # 检查 HTTP 状态码是否为 200
+          if echo "$response" | grep -q "HTTP_CODE:200"; then
+            echo "✅ Supabase ping successful (HTTP 200)"
+          else
+            echo "❌ Supabase ping failed"
+            exit 1  # 非零退出码 = 任务失败，GitHub 会发邮件通知
+          fi
+      
+      # 步骤3：再发一次更新请求，确保写入活动也算数（双保险）
+      - name: Touch updated_at field
+        env:
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        run: |
+          # PATCH 请求更新 updated_at 字段，触发写入活动
+          # Prefer: return=minimal 表示不需要返回数据，减少流量
+          response=$(curl -sS -w "\nHTTP_CODE:%{http_code}" --max-time 30 \
+            -X PATCH \
+            -H "apikey: $SUPABASE_ANON_KEY" \
+            -H "Authorization: Bearer $SUPABASE_ANON_KEY" \
+            -H "Content-Type: application/json" \
+            -H "Prefer: return=minimal" \
+            -d '{"updated_at": "now()"}' \
+            "$SUPABASE_URL/rest/v1/movies?id=eq.main")
+          
+          echo "Response: $response"
+          
+          # PATCH 成功返回 204（No Content）或 200
+          if echo "$response" | grep -qE "HTTP_CODE:(200|204)"; then
+            echo "✅ Touch successful"
+          else
+            echo "❌ Touch failed"
+            exit 1
+          fi
