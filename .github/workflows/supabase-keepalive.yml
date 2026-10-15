@@ -3,7 +3,7 @@ name: Supabase MemoFilm Keepalive
 # 触发条件：定时 + 手动
 on:
   schedule:
-    # 每5天的0点0分（UTC时间）执行一次
+    # 每3天的0点0分（UTC时间）执行一次
     # cron 五字段：分 时 日 月 周
     # 0 0 */3 * * = 每3天的00:00
     - cron: '0 0 */5 * *'
